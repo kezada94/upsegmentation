@@ -14,20 +14,20 @@ from unet import UNet
 from dataset import SyntheticDataset
 
 
-def count_true_positives(yp, yt):
-    return 0
+def count_true_positives(yp, yt, threshold=0.5):
+    return (yp > threshold) & (yt == 1)
 
 
-def count_true_negatives(yp, yt):
-    return 0
+def count_true_negatives(yp, yt, threshold=0.5):
+    return (yp < threshold) & (yt == 0)
 
 
-def count_false_positives(yp, yt):
-    return 0
+def count_false_positives(yp, yt, threshold=0.5):
+    return (yp > threshold) & (yt == 0)
 
 
-def count_false_negatives(yp, yt):
-    return 0
+def count_false_negatives(yp, yt, threshold=0.5):
+    return (yp < threshold) & (yt == 1)
 
 
 @argh.arg("epochs", type=int)
