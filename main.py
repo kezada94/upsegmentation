@@ -59,14 +59,14 @@ def train(epochs: int, use_cuda: bool = True, batch_size=64, num_workers=4, chec
 
     learning_curve = []
 
-    epoch_loop = tqdm(range(epochs), position=0)
+    epoch_loop = tqdm(range(epochs), position=0, desc='Epoch')
     for epoch in epoch_loop:
         learning_data = {'epoch': epoch}
 
         with torch.set_grad_enabled(True):
             learning_data['loss'] = 0.0
 
-            train_loop = tqdm(train_loader, position=1, leave=True, desc='Train')
+            train_loop = tqdm(train_loader, position=1, leave=False, desc='Train')
 
             model.train()
             for batch_idx, (x, yt) in enumerate(train_loop):
@@ -85,9 +85,9 @@ def train(epochs: int, use_cuda: bool = True, batch_size=64, num_workers=4, chec
 
         with torch.set_grad_enabled(False):
             for ev_name in evaluation.keys():
-                evaluation[ev_name] = 0
+                learning_data[ev_name] = 0
 
-            test_loop = tqdm(test_loader, position=1, leave=True, desc='Test')
+            test_loop = tqdm(test_loader, position=1, leave=False, desc='Test')
 
             model.eval()
             for batch_idx, (x, yt) in enumerate(test_loop):
