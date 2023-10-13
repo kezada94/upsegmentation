@@ -90,7 +90,7 @@ def train(epochs: int,
                 batch_loss = loss.item()
                 learning_data['loss'] += batch_loss
 
-                train_loop.set_postfix(epoch=epoch, batch=batch_idx, loss=batch_loss)
+                train_loop.set_postfix(loss=batch_loss)
 
         with torch.set_grad_enabled(False):
             for ev_name in evaluation.keys():
@@ -106,8 +106,6 @@ def train(epochs: int,
 
                 for ev_name, ev_fn in evaluation.items():
                     learning_data[ev_name] += ev_fn(yp, yt)
-
-                test_loop.set_postfix(epoch=epoch, batch=batch_idx)
 
         learning_curve.append(learning_data)
         epoch_loop.set_postfix(learning_data)
