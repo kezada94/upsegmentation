@@ -2,7 +2,9 @@ import torch
 
 
 def _reduction(x, reduction):
-    if reduction == 'sum':
+    if reduction is None:
+        return x
+    elif reduction == 'sum':
         return torch.sum(x)
     elif reduction == 'mean':
         return torch.mean(x)
