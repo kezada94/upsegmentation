@@ -1,7 +1,7 @@
 import csv
 import argh
 from pathlib import Path
-from Typing import Dict, Callable
+from typing import Dict, Callable
 
 import torch.optim
 from tqdm import tqdm
