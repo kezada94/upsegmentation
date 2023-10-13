@@ -1,7 +1,7 @@
 import csv
 import argh
 from pathlib import Path
-from typing import Dict, Callable
+from typing import Dict, Callable, Union
 
 import torch.optim
 from tqdm import tqdm
@@ -20,7 +20,7 @@ def train(model: nn.Module,
           use_cuda: bool,
           train_loader: DataLoader,
           criterion: nn.Module,
-          optimizer: torch.optim.Optimizer) -> Dict[Callable]:
+          optimizer: torch.optim.Optimizer) -> Dict[str, Union[int, float]]:
 
     batch_loss = 0.0
     train_loop = tqdm(train_loader, position=1, leave=False, desc='Train')
@@ -43,10 +43,14 @@ def train(model: nn.Module,
     return {'loss': batch_loss}
 
 
-def evaluate(model: nn.Module, use_cuda: bool, test_loader: DataLoader, evaluation: Dict) -> Dict:
+def evaluate(model: nn.Module,
+             use_cuda: bool,
+             test_loader: DataLoader,
+             evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
+
     learning_data = {}
     for ev_name in evaluation.keys():
-        learning_data[ev_name] = 0
+        learning_data[ev_name] = 0.0
     test_loop = tqdm(test_loader, position=1, leave=False, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
