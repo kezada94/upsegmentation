@@ -1,5 +1,7 @@
 import csv
 import argh
+from pathlib import Path
+
 from tqdm import tqdm
 
 import torch
@@ -33,7 +35,14 @@ def count_false_negatives(yp, yt):
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--num-workers", type=int, default=4)
 @argh.arg("--checkpoint-epoch", type=int, default=10)
-def train(epochs: int, use_cuda: bool = True, batch_size=64, num_workers=4, checkpoint_epoch: int = 10):
+@argh.arg("--save-path", type=Path, default=Path('data'))
+def train(epochs: int,
+          use_cuda: bool = True,
+          batch_size=64,
+          num_workers=4,
+          checkpoint_epoch: int = 10,
+          save_path: Path = Path('data')):
+
     use_cuda = use_cuda and torch.cuda.is_available()
 
     model = UNet(1, 2)
@@ -104,11 +113,11 @@ def train(epochs: int, use_cuda: bool = True, batch_size=64, num_workers=4, chec
         epoch_loop.set_postfix(learning_data)
 
         if (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
-            torch.save(model.state_dict(), f"data/unet-checkpoint-{epoch:40d}.pth")
+            torch.save(model.state_dict(), save_path / f"unet-checkpoint-{epoch:40d}.pth")
 
-    torch.save(model.state_dict(), "data/unet.pth")
+    torch.save(model.state_dict(), save_path / "unet.pth")
 
-    with open("data/learning_curve.tsv", "w", newline="") as f:
+    with open(save_path / "learning_curve.tsv", "w", newline="") as f:
         fields = list(learning_curve[0].keys())
         writer = csv.DictWriter(f, fields, delimiter="\t")
         writer.writeheader()
