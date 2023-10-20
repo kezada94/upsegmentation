@@ -1,14 +1,15 @@
 import csv
-import argh
+import random
 from pathlib import Path
 from typing import Dict, Callable, Union
 
+import argh
+import numpy as np
 import torch.optim
-from tqdm import tqdm
-
 import torch.nn as nn
-
 import torchvision.transforms as transforms
+
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 
 from unet import UNet
@@ -66,21 +67,38 @@ def evaluate(model: nn.Module,
 
 
 @argh.arg("epochs", type=int)
+@argh.arg("model", type=str, choices=['unet', 'runet'])
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--num-workers", type=int, default=4)
 @argh.arg("--checkpoint-epoch", type=int, default=10)
 @argh.arg("--save-path", type=Path, default=Path('data'))
+@argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
+         model: str,
          use_cuda: bool = True,
          batch_size=64,
          num_workers=4,
          checkpoint_epoch: int = 10,
-         save_path: Path = Path('data')):
+         save_path: Path = Path('data'),
+         seed: int = None):
 
     use_cuda = use_cuda and torch.cuda.is_available()
 
-    model = UNet(1, 2)
+    if seed is not None:
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        if use_cuda:
+            torch.cuda.manual_seed(seed)
+        # torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
+
+    if model == 'unet':
+        model = UNet(1, 2)
+
+    else:
+        raise ValueError
 
     data = SyntheticDataset('data/generated/png', transforms.ToTensor())
 
@@ -126,5 +144,4 @@ def main(epochs: int,
 
 
 if __name__ == "__main__":
-    # (?, 1, 112, 112) -> (?, 2, 186, 186)
     argh.dispatch_command(main)
