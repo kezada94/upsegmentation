@@ -54,16 +54,16 @@ class UNet(nn.Module):
         l3 = self.lvl_a3(self.lvl_a2_mp(l2))
         lc = self.lvl_c(self.lvl_a3_mp(l3))
         lc = self.lvl_c_conv(F.interpolate(lc, scale_factor=2, mode='bilinear'))
-        l3 = F.interpolate(l3, scale_factor=(lc.shape[2] / l3.shape[2], lc.shape[3] / l3.shape[3]), mode='bilinear')
+        l3 = l3[:, :, :lc.shape[2], :lc.shape[3]]
         l3 = self.lvl_b3(torch.concatenate([l3, lc], dim=1))
         l3 = self.lvl_b3_conv(F.interpolate(l3, scale_factor=2, mode='bilinear'))
-        l2 = F.interpolate(l2, scale_factor=(l3.shape[2] / l2.shape[2], l3.shape[3] / l2.shape[3]), mode='bilinear')
+        l2 = l2[:, :, :l3.shape[2], :l3.shape[3]]
         l2 = self.lvl_b2(torch.cat([l2, l3], dim=1))
         l2 = self.lvl_b2_conv(F.interpolate(l2, scale_factor=2, mode='bilinear'))
-        l1 = F.interpolate(l1, scale_factor=(l2.shape[2] / l1.shape[2], l2.shape[3] / l1.shape[3]), mode='bilinear')
+        l1 = l1[:, :, :l2.shape[2], :l2.shape[3]]
         l1 = self.lvl_b1(torch.cat([l1, l2], dim=1))
         l1 = self.lvl_b1_conv(F.interpolate(l1, scale_factor=2, mode='bilinear'))
-        l0 = F.interpolate(l0, scale_factor=(l1.shape[2] / l0.shape[2], l1.shape[3] / l0.shape[3]), mode='bilinear')
+        l0 = l0[:, :, :l1.shape[2], :l1.shape[3]]
         l0 = self.lvl_b0(torch.cat([l0, l1], dim=1))
         l0 = self.conv_cls(l0)
         return l0
