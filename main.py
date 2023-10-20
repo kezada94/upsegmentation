@@ -12,7 +12,7 @@ import torchvision.transforms as transforms
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-from unet import UNet
+from models import *
 from dataset import SyntheticDataset
 from evaluations import *
 
@@ -96,6 +96,9 @@ def main(epochs: int,
 
     if model == 'unet':
         model = UNet(1, 2)
+
+    if model == 'runet':
+        model = RUNet(1, 2)
 
     else:
         raise ValueError
