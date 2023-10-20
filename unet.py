@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def contracting_block(in_channels: int, out_channels: int):
+def down_block(in_channels: int, out_channels: int):
     return nn.Sequential(
         nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=0),
         nn.ReLU(),
@@ -12,7 +12,7 @@ def contracting_block(in_channels: int, out_channels: int):
     )
 
 
-def expanding_block(in_channels: int, out_channels: int):
+def up_block(in_channels: int, out_channels: int):
     return nn.Sequential(
         nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=2),
         nn.ReLU(),
@@ -27,23 +27,23 @@ class UNet(nn.Module):
         self.channels = channels
         self.num_classes = num_classes
 
-        self.lvl_a0 = contracting_block(self.channels, 64)
+        self.lvl_a0 = down_block(self.channels, 64)
         self.lvl_a0_mp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.lvl_a1 = contracting_block(64, 128)
+        self.lvl_a1 = down_block(64, 128)
         self.lvl_a1_mp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.lvl_a2 = contracting_block(128, 256)
+        self.lvl_a2 = down_block(128, 256)
         self.lvl_a2_mp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.lvl_a3 = contracting_block(256, 512)
+        self.lvl_a3 = down_block(256, 512)
         self.lvl_a3_mp = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.lvl_c = contracting_block(512, 1024)
+        self.lvl_c = down_block(512, 1024)
         self.lvl_c_conv = nn.Conv2d(1024, 512, kernel_size=3, stride=1, padding=2)
-        self.lvl_b3 = expanding_block(1024, 512)
+        self.lvl_b3 = up_block(1024, 512)
         self.lvl_b3_conv = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=2)
-        self.lvl_b2 = expanding_block(512, 256)
+        self.lvl_b2 = up_block(512, 256)
         self.lvl_b2_conv = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=2)
-        self.lvl_b1 = expanding_block(256, 128)
+        self.lvl_b1 = up_block(256, 128)
         self.lvl_b1_conv = nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=2)
-        self.lvl_b0 = expanding_block(128, 64)
+        self.lvl_b0 = up_block(128, 64)
         self.conv_cls = nn.Conv2d(64, self.num_classes, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
