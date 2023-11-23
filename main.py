@@ -1,3 +1,4 @@
+import os
 import csv
 import random
 from pathlib import Path
@@ -102,8 +103,15 @@ def main(epochs: int,
                    "seed": seed,
                })
 
-    if wandb.run and save_path is None:
-        save_path = wandb.run.dir
+    if save_path is None:
+        if os.environ.get('WANDB_MODE', 'disabled') == 'disabled':(
+            save_path) = Path('data/tests')
+        elif wandb.run:
+            save_path = wandb.run.dir
+        else:
+            raise ValueError
+
+    print('Saving checkpoints to', save_path)
 
     if seed is not None:
         np.random.seed(seed)
