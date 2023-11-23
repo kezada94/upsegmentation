@@ -1,6 +1,7 @@
 name: upsegmentation
 channels:
   - conda-forge
+  - pytorch
   - defaults
 dependencies:
   - python=3.11.3
@@ -11,4 +12,5 @@ dependencies:
   - pillow
   - svgutils
   - cairosvg
+  - wandb
   - pip

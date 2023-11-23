@@ -101,6 +101,7 @@ class RUNet(nn.Module):
         self.out = nn.Conv2d(99, out_channels, (1, 1), padding='same')
 
     def forward(self, x):
+        x = F.interpolate(x, scale_factor=2, mode='bilinear')
         d1 = self.down1(x)
         d2 = self.down2(d1)
         d3 = self.down3(d2)
