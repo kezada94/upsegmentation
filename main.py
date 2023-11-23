@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Callable, Union
 
 import argh
+import wandb
 import numpy as np
 import torch.optim
 import torch.nn as nn
@@ -18,7 +19,7 @@ from evaluations import *
 
 
 def train(model: nn.Module,
-          use_cuda: bool,
+          device: str,
           train_loader: DataLoader,
           criterion: nn.Module,
           optimizer: torch.optim.Optimizer) -> Dict[str, Union[int, float]]:
@@ -28,8 +29,9 @@ def train(model: nn.Module,
     with torch.set_grad_enabled(True):
         model.train()
         for batch_idx, (x, yt) in enumerate(train_loop):
-            if use_cuda:
-                x, yt = x.cuda(), yt.cuda()
+            x = x.to(device)
+            yt = yt.to(device)
+
             optimizer.zero_grad()
             yp = model(x)
             loss = criterion(yp, yt)
@@ -45,7 +47,7 @@ def train(model: nn.Module,
 
 
 def evaluate(model: nn.Module,
-             use_cuda: bool,
+             device: str,
              test_loader: DataLoader,
              evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
 
@@ -56,8 +58,9 @@ def evaluate(model: nn.Module,
     with torch.set_grad_enabled(False):
         model.eval()
         for batch_idx, (x, yt) in enumerate(test_loop):
-            if use_cuda:
-                x, yt = x.cuda(), yt.cuda()
+            x = x.to(device)
+            yt = yt.to(device)
+
             yp = model(x)
 
             for ev_name, ev_fn in evaluation.items():
@@ -67,45 +70,65 @@ def evaluate(model: nn.Module,
 
 
 @argh.arg("epochs", type=int)
-@argh.arg("model", type=str, choices=['unet', 'runet'])
+@argh.arg("model-name", type=str, choices=['unet', 'runet'])
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--num-workers", type=int, default=4)
 @argh.arg("--checkpoint-epoch", type=int, default=10)
-@argh.arg("--save-path", type=Path, default=Path('data'))
+@argh.arg("--save-path", type=Path, default=None)
 @argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
-         model: str,
+         model_name: str,
          use_cuda: bool = True,
          batch_size=64,
          num_workers=4,
          checkpoint_epoch: int = 10,
-         save_path: Path = Path('data'),
+         save_path: Path = None,
          seed: int = None):
 
-    use_cuda = use_cuda and torch.cuda.is_available()
+    # Set environment variable WANDB_MODE=disabled
+    # Remember to set WANDB_API_KEY as an environment variable
+    wandb.login()
+
+    device = "cuda:0" if use_cuda and torch.cuda.is_available() else "cpu"
+
+    wandb.init(project="upsegmentation",
+               config={
+                   "epochs": epochs,
+                   "model": model_name,
+                   "device": device,
+                   "batch_size": batch_size,
+                   "num_workers": num_workers,
+                   "seed": seed,
+               })
+
+    if wandb.run and save_path is None:
+        save_path = wandb.run.dir
 
     if seed is not None:
         np.random.seed(seed)
         random.seed(seed)
         torch.manual_seed(seed)
-        if use_cuda:
+        if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
         # torch.backends.cudnn.deterministic = True
         # torch.backends.cudnn.benchmark = False
 
-    if model == 'unet':
+    if model_name == 'unet':
         model = UNet(1, 2)
-
-    if model == 'runet':
+    elif model_name == 'runet':
         model = RUNet(1, 2)
-
     else:
         raise ValueError
 
+    model = model.to(device)
+
     data = SyntheticDataset('data/generated/png', transforms.ToTensor())
 
-    train_data, test_data = torch.utils.data.random_split(data, [800, 200])
+    train_len = int(0.8 * len(data))
+    test_len = len(data) - train_len
+
+    train_data, test_data = torch.utils.data.random_split(data, [train_len, test_len])
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
@@ -119,31 +142,33 @@ def main(epochs: int,
         'false_negatives': count_false_negatives,
     }
 
-    if use_cuda:
-        model = model.cuda()
-
     learning_curve = []
 
     epoch_loop = tqdm(range(epochs), position=0, desc='Epoch')
     for epoch in epoch_loop:
         learning_data = {'epoch': epoch}
 
-        learning_data.update(train(model, use_cuda, train_loader, criterion, optimizer))
-        learning_data.update(evaluate(model, use_cuda, test_loader, evaluations))
+        learning_data.update({f"train_{k}": v
+                              for k, v in train(model, device, train_loader, criterion, optimizer).items()})
+        learning_data.update({f"eval_{k}": v
+                              for k, v in evaluate(model, device, test_loader, evaluations).items()})
 
         learning_curve.append(learning_data)
         epoch_loop.set_postfix(learning_data)
+        wandb.log(learning_data)
 
         if (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
-            torch.save(model.state_dict(), save_path / f"unet-checkpoint-{epoch:40d}.pth")
+            torch.save(model.state_dict(), save_path / f"{model_name}-checkpoint-{epoch:40d}.pth")
 
-    torch.save(model.state_dict(), save_path / "unet.pth")
+    torch.save(model.state_dict(), save_path / f"{model_name}.pth")
 
     with open(save_path / "learning_curve.tsv", "w", newline="") as f:
         fields = list(learning_curve[0].keys())
         writer = csv.DictWriter(f, fields, delimiter="\t")
         writer.writeheader()
         writer.writerows(learning_curve)
+
+    wandb.finish()
 
 
 if __name__ == "__main__":

@@ -106,10 +106,10 @@ def main():
     path = Path('data')
     num_images = 1000
 
-    # download_zip(path, "https://github.com/jnovack/pokemon-svg/archive/refs/heads/master.zip", "pokemon-svg.zip")
-    # download_zip(path, "https://opengameart.org/sites/default/files/seamlessTextures2.zip", "textures.zip")
-    # generate_svg(path / 'pokemon-svg' / 'pokemon-svg-master' / 'svg', path / 'generated' / 'svg', num_images)
-    raster_svg(path / 'generated' / 'svg', path / 'generated' / 'png', 112, 112, 186, 186, path / 'textures')
+    download_zip(path, "https://github.com/jnovack/pokemon-svg/archive/refs/heads/master.zip", "pokemon-svg.zip")
+    download_zip(path, "https://opengameart.org/sites/default/files/seamlessTextures2.zip", "textures.zip")
+    generate_svg(path / 'pokemon-svg' / 'pokemon-svg-master' / 'svg', path / 'generated' / 'svg', num_images)
+    raster_svg(path / 'generated' / 'svg', path / 'generated' / 'png', 112, 112, 224, 224, path / 'textures')
 
 
 if __name__ == "__main__":
