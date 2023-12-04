@@ -54,7 +54,8 @@ def get_image(file: Path, width, height):
 
 
 def raster_svg(src_path, dst_path, input_width, input_height, output_width, output_height, texture_path = None):
-    dst_path.mkdir(parents=True, exist_ok=True)
+    for p in ['train', 'test', 'eval']:
+        (dst_path / p).mkdir(parents=True, exist_ok=True)
 
     textures = []
 
@@ -65,7 +66,20 @@ def raster_svg(src_path, dst_path, input_width, input_height, output_width, outp
             except Exception as e:
                 print(e)
 
-    for file in src_path.glob('*.svg'):
+    images = list(src_path.glob('*.svg'))
+    num_images = len(images)
+
+    train_len = int(0.75 * num_images)
+    test_len = int(0.2 * num_images)
+
+    for i, file in enumerate(images):
+        if i < train_len:
+            folder = 'train'
+        elif i < train_len + test_len:
+            folder = 'test'
+        else:
+            folder = 'eval'
+
         # target
         image = get_image(file, output_width, output_height)
         (Image
@@ -99,7 +113,7 @@ def raster_svg(src_path, dst_path, input_width, input_height, output_width, outp
 
         image = Image.frombuffer('RGB', (input_width, input_height), image, 'raw', 'RGB', 0, 1)
         image = ImageOps.grayscale(image)
-        image.save(str(dst_path / file.with_suffix('.png').name))
+        image.save(str(dst_path / folder / file.with_suffix('.png').name))
 
 
 def main():
