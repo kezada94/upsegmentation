@@ -1,8 +1,8 @@
-import os
 import csv
 import random
 from pathlib import Path
-from typing import Dict, Callable, Union
+from typing import Dict, List, Callable, Union, Any
+from itertools import islice
 
 import argh
 import wandb
@@ -13,6 +13,7 @@ import torchvision.transforms as transforms
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from PIL import Image as PILImage
 
 from models import *
 from dataset import SyntheticDataset
@@ -69,6 +70,42 @@ def evaluate(model: nn.Module,
 
             for ev_name, ev_fn in evaluation.items():
                 learning_data[ev_name] += ev_fn(yp, yt)
+
+    return learning_data
+
+
+def save_images(data: torch.utils.data.Dataset,
+                device: str,
+                model: nn.Module,
+                epoch: int,
+                num_images: int = 1) -> dict[str, list[Any]]:
+    learning_data = {
+        'input_image': [],
+        'ground_truth': [],
+        'prediction': [],
+    }
+
+    # Pick the first image in the test set
+    for x, yt in islice(data, num_images):
+        with torch.set_grad_enabled(False):
+            x = x.to(device)
+            yt = yt.to(device)
+
+            model.eval()
+            yp = model(x)
+
+        # Get the numpy arrays
+        x = PILImage.fromarray(x.cpu().numpy(), mode='RGB')
+        yt = PILImage.fromarray(yt.cpu().numpy(), mode='RGB')
+        yp = PILImage.fromarray(yp.cpu().detach().numpy(), mode='RGB')
+
+        x = wandb.Image(x, caption=f"Input image at {epoch}")
+        yt = wandb.Image(yt, caption=f"Ground truth at {epoch}")
+        yp = wandb.Image(yp, caption=f"Prediction at {epoch}")
+
+        learning_data['input_image'].append(x)
+        learning_data['ground_truth'].append(yt)
+        learning_data['prediction'].append(yp)
 
     return learning_data
 
@@ -139,6 +176,7 @@ def main(epochs: int,
 
     train_data = SyntheticDataset('data/generated/png/train', transforms.ToTensor())
     test_data = SyntheticDataset('data/generated/png/test', transforms.ToTensor())
+    # eval_data = SyntheticDataset('data/generated/png/eval', transforms.ToTensor())
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -159,17 +197,20 @@ def main(epochs: int,
         learning_data.update({f"train_{k}": v
                               for k, v in train(model, device, train_loader, criterion, optimizer, evaluations).items()
                               })
-        learning_data.update({f"eval_{k}": v
+        learning_data.update({f"test_{k}": v
                               for k, v in evaluate(model, device, test_loader, evaluations).items()
                               })
 
         learning_curve.append(learning_data)
         epoch_loop.set_postfix(learning_data)
-        wandb.log(learning_data)
 
         if save_path and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
             checkpoint_name = f"{model_name}-checkpoint-{epoch:04d}.pth"
             torch.save(model.state_dict(), save_path / checkpoint_name)
+
+            learning_data.update(save_images(test_data, device, model, epoch, 1))
+
+        wandb.log(learning_data)
 
     if save_path:
         torch.save(model.state_dict(), save_path / f"{model_name}.pth")
