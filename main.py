@@ -137,12 +137,9 @@ def main(epochs: int,
 
     model = model.to(device)
 
-    data = SyntheticDataset('data/generated/png', transforms.ToTensor())
+    train_data = SyntheticDataset('data/generated/png/train', transforms.ToTensor())
+    test_data = SyntheticDataset('data/generated/png/test', transforms.ToTensor())
 
-    train_len = int(0.8 * len(data))
-    test_len = len(data) - train_len
-
-    train_data, test_data = torch.utils.data.random_split(data, [train_len, test_len])
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
