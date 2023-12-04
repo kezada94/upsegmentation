@@ -30,3 +30,8 @@ def count_false_positives(yp, yt, threshold=0.5, reduction='sum'):
 def count_false_negatives(yp, yt, threshold=0.5, reduction='sum'):
     c = ((yp < threshold) & (yt == 1)).sum(dim=(2, 3))
     return _reduction(c, reduction)
+
+
+def accuracy(yp, yt, threshold=0.5, reduction='sum'):
+    c = ((yp > threshold) & (yt == 1)).sum(dim=(2, 3)) + ((yp < threshold) & (yt == 0)).sum(dim=(2, 3))
+    return _reduction(c, reduction)

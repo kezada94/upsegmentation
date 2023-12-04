@@ -23,9 +23,11 @@ def train(model: nn.Module,
           device: str,
           train_loader: DataLoader,
           criterion: nn.Module,
-          optimizer: torch.optim.Optimizer) -> Dict[str, Union[int, float]]:
+          optimizer: torch.optim.Optimizer,
+          evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
 
-    batch_loss = 0.0
+    learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
+    learning_data['loss'] = 0.0
     train_loop = tqdm(train_loader, position=1, leave=False, desc='Train')
     with torch.set_grad_enabled(True):
         model.train()
@@ -40,11 +42,14 @@ def train(model: nn.Module,
             optimizer.step()
 
             batch_loss = loss.item()
-            batch_loss += batch_loss
 
             train_loop.set_postfix(loss=batch_loss)
+            learning_data['loss'] += batch_loss
 
-    return {'loss': batch_loss}
+            for ev_name, ev_fn in evaluation.items():
+                learning_data[ev_name] += ev_fn(yp, yt)
+
+    return learning_data
 
 
 def evaluate(model: nn.Module,
@@ -52,9 +57,7 @@ def evaluate(model: nn.Module,
              test_loader: DataLoader,
              evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
 
-    learning_data = {}
-    for ev_name in evaluation.keys():
-        learning_data[ev_name] = 0.0
+    learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
     test_loop = tqdm(test_loader, position=1, leave=False, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
@@ -74,6 +77,7 @@ def evaluate(model: nn.Module,
 @argh.arg("model-name", type=str, choices=['unet', 'runet'])
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--batch-size", type=int, default=64)
+@argh.arg("--learning-rate", type=float, default=1e-4)
 @argh.arg("--num-workers", type=int, default=4)
 @argh.arg("--checkpoint-epoch", type=int, default=10)
 @argh.arg("--save-path", type=Path, default=None)
@@ -82,6 +86,7 @@ def main(epochs: int,
          model_name: str,
          use_cuda: bool = True,
          batch_size=64,
+         learning_rate=1e-4,
          num_workers=4,
          checkpoint_epoch: int = 10,
          save_path: Path = None,
@@ -99,17 +104,18 @@ def main(epochs: int,
                    "model": model_name,
                    "device": device,
                    "batch_size": batch_size,
+                   "learning_rate": learning_rate,
                    "num_workers": num_workers,
                    "seed": seed,
                })
 
-    if save_path is None:
-        if os.environ.get('WANDB_MODE', 'disabled') == 'disabled':(
-            save_path) = Path('data/tests')
-        elif wandb.run:
-            save_path = wandb.run.dir
-        else:
-            raise ValueError
+    # Check if save_path is None and wandb is not disabled
+    # If wandb is not disabled, save_path is set to wandb.run.dir
+    if save_path is None and wandb.run is not None:
+        save_path = Path(wandb.run.dir)
+
+    if save_path:
+        save_path.mkdir(parents=True, exist_ok=True)
 
     print('Saving checkpoints to', save_path)
 
@@ -140,14 +146,11 @@ def main(epochs: int,
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.BCEWithLogitsLoss()
 
     evaluations = {
-        'true_positives': count_true_positives,
-        'true_negatives': count_true_negatives,
-        'false_positives': count_false_positives,
-        'false_negatives': count_false_negatives,
+        'accuracy': accuracy,
     }
 
     learning_curve = []
@@ -157,24 +160,28 @@ def main(epochs: int,
         learning_data = {'epoch': epoch}
 
         learning_data.update({f"train_{k}": v
-                              for k, v in train(model, device, train_loader, criterion, optimizer).items()})
+                              for k, v in train(model, device, train_loader, criterion, optimizer, evaluations).items()
+                              })
         learning_data.update({f"eval_{k}": v
-                              for k, v in evaluate(model, device, test_loader, evaluations).items()})
+                              for k, v in evaluate(model, device, test_loader, evaluations).items()
+                              })
 
         learning_curve.append(learning_data)
         epoch_loop.set_postfix(learning_data)
         wandb.log(learning_data)
 
-        if (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
-            torch.save(model.state_dict(), save_path / f"{model_name}-checkpoint-{epoch:40d}.pth")
+        if save_path and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
+            checkpoint_name = f"{model_name}-checkpoint-{epoch:04d}.pth"
+            torch.save(model.state_dict(), save_path / checkpoint_name)
 
-    torch.save(model.state_dict(), save_path / f"{model_name}.pth")
+    if save_path:
+        torch.save(model.state_dict(), save_path / f"{model_name}.pth")
 
-    with open(save_path / "learning_curve.tsv", "w", newline="") as f:
-        fields = list(learning_curve[0].keys())
-        writer = csv.DictWriter(f, fields, delimiter="\t")
-        writer.writeheader()
-        writer.writerows(learning_curve)
+        with open(save_path / "learning_curve.tsv", "w", newline="") as f:
+            fields = list(learning_curve[0].keys())
+            writer = csv.DictWriter(f, fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(learning_curve)
 
     wandb.finish()
 

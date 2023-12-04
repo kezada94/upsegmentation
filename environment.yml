@@ -10,6 +10,8 @@ dependencies:
   - tqdm
   - argh
   - pillow
+  - matplotlib
+  - scikit-learn
   - svgutils
   - cairosvg
   - wandb
