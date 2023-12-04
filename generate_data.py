@@ -84,7 +84,7 @@ def raster_svg(src_path, dst_path, input_width, input_height, output_width, outp
         image = get_image(file, output_width, output_height)
         (Image
          .frombuffer("L", image.size, image.tobytes("raw", "A"))
-         .save(str(dst_path / f"{file.stem}_target.png")))
+         .save(str(dst_path / folder / f"{file.stem}_target.png")))
 
         # input
         image = get_image(file, input_width, input_height)
