@@ -20,6 +20,16 @@ from dataset import SyntheticDataset
 from evaluations import *
 
 
+def torch_2_array(x: torch.Tensor) -> np.ndarray:
+    x = x.cpu().numpy()
+
+    x = np.repeat(x[:, 0, :, :][:, None, :, :], 3, axis=1)
+    x = np.transpose(x, (0, 2, 3, 1))
+    x = (np.clip(x, 0, 1) * 255).astype('uint8')
+
+    return x
+
+
 def train(model: nn.Module,
           device: str,
           train_loader: DataLoader,
@@ -29,7 +39,7 @@ def train(model: nn.Module,
 
     learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
     learning_data['loss'] = 0.0
-    train_loop = tqdm(train_loader, position=1, leave=False, desc='Train')
+    train_loop = tqdm(train_loader, position=1, leave=True, desc='Train')
     with torch.set_grad_enabled(True):
         model.train()
         for batch_idx, (x, yt) in enumerate(train_loop):
@@ -59,7 +69,7 @@ def evaluate(model: nn.Module,
              evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
 
     learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
-    test_loop = tqdm(test_loader, position=1, leave=False, desc='Test')
+    test_loop = tqdm(test_loader, position=1, leave=True, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
         for batch_idx, (x, yt) in enumerate(test_loop):
@@ -74,11 +84,10 @@ def evaluate(model: nn.Module,
     return learning_data
 
 
-def save_images(data: torch.utils.data.Dataset,
+def save_images(data: DataLoader,
                 device: str,
                 model: nn.Module,
-                epoch: int,
-                num_images: int = 1) -> dict[str, list[Any]]:
+                epoch: int) -> dict[str, list[Any]]:
     learning_data = {
         'input_image': [],
         'ground_truth': [],
@@ -86,7 +95,7 @@ def save_images(data: torch.utils.data.Dataset,
     }
 
     # Pick the first image in the test set
-    for x, yt in islice(data, num_images):
+    for x, yt in data:
         with torch.set_grad_enabled(False):
             x = x.to(device)
             yt = yt.to(device)
@@ -95,17 +104,18 @@ def save_images(data: torch.utils.data.Dataset,
             yp = model(x)
 
         # Get the numpy arrays
-        x = PILImage.fromarray(x.cpu().numpy(), mode='RGB')
-        yt = PILImage.fromarray(yt.cpu().numpy(), mode='RGB')
-        yp = PILImage.fromarray(yp.cpu().detach().numpy(), mode='RGB')
+        x = torch_2_array(x)
+        yt = torch_2_array(yt)
+        yp = torch_2_array(yp)
 
-        x = wandb.Image(x, caption=f"Input image at {epoch}")
-        yt = wandb.Image(yt, caption=f"Ground truth at {epoch}")
-        yp = wandb.Image(yp, caption=f"Prediction at {epoch}")
+        for i in range(x.shape[0]):
+            _x = PILImage.fromarray(x[i], mode='RGB')
+            _yt = PILImage.fromarray(yt[i], mode='RGB')
+            _yp = PILImage.fromarray(yp[i], mode='RGB')
 
-        learning_data['input_image'].append(x)
-        learning_data['ground_truth'].append(yt)
-        learning_data['prediction'].append(yp)
+            learning_data['input_image'].append(wandb.Image(_x, caption=f"Input image at {epoch}"))
+            learning_data['ground_truth'].append(wandb.Image(_yt, caption=f"Ground truth at {epoch}"))
+            learning_data['prediction'].append(wandb.Image(_yp, caption=f"Prediction at {epoch}"))
 
     return learning_data
 
@@ -176,10 +186,11 @@ def main(epochs: int,
 
     train_data = SyntheticDataset('data/generated/png/train', transforms.ToTensor())
     test_data = SyntheticDataset('data/generated/png/test', transforms.ToTensor())
-    # eval_data = SyntheticDataset('data/generated/png/eval', transforms.ToTensor())
+    eval_data = SyntheticDataset('data/generated/png/eval', transforms.ToTensor())
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    eval_loader = torch.utils.data.DataLoader(eval_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.BCEWithLogitsLoss()
@@ -190,7 +201,7 @@ def main(epochs: int,
 
     learning_curve = []
 
-    epoch_loop = tqdm(range(epochs), position=0, desc='Epoch')
+    epoch_loop = tqdm(range(epochs), position=0, desc='Epoch', leave=True)
     for epoch in epoch_loop:
         learning_data = {'epoch': epoch}
 
@@ -208,7 +219,7 @@ def main(epochs: int,
             checkpoint_name = f"{model_name}-checkpoint-{epoch:04d}.pth"
             torch.save(model.state_dict(), save_path / checkpoint_name)
 
-            learning_data.update(save_images(test_data, device, model, epoch, 1))
+            learning_data.update(save_images(eval_loader, device, model, epoch))
 
         wandb.log(learning_data)
 
