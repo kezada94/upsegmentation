@@ -1,8 +1,7 @@
 import csv
 import random
 from pathlib import Path
-from typing import Dict, List, Callable, Union, Any
-from itertools import islice
+from typing import Dict, Callable, Any
 
 import argh
 import wandb
@@ -13,36 +12,35 @@ import torchvision.transforms as transforms
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from PIL import Image as PILImage
+from sklearn.metrics import roc_curve, auc
 
 from models import *
 from dataset import SyntheticDataset
 from evaluations import *
+from plot import plot_roc_and_samples
 
 
 def torch_2_array(x: torch.Tensor) -> np.ndarray:
-    x = x.cpu().numpy()
-
+    x = x.detach().cpu().numpy()
     x = np.repeat(x[:, 0, :, :][:, None, :, :], 3, axis=1)
     x = np.transpose(x, (0, 2, 3, 1))
     x = (np.clip(x, 0, 1) * 255).astype('uint8')
-
     return x
 
 
 def train(model: nn.Module,
           device: str,
-          train_loader: DataLoader,
+          loader: DataLoader,
           criterion: nn.Module,
           optimizer: torch.optim.Optimizer,
-          evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
+          evaluation: Dict[str, Callable]) -> Dict[str, Any]:
 
     learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
     learning_data['loss'] = 0.0
-    train_loop = tqdm(train_loader, position=1, leave=True, desc='Train')
+    loop = tqdm(loader, position=1, leave=True, desc='Train')
     with torch.set_grad_enabled(True):
         model.train()
-        for batch_idx, (x, yt) in enumerate(train_loop):
+        for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
 
@@ -54,7 +52,7 @@ def train(model: nn.Module,
 
             batch_loss = loss.item()
 
-            train_loop.set_postfix(loss=batch_loss)
+            loop.set_postfix(loss=batch_loss)
             learning_data['loss'] += batch_loss
 
             for ev_name, ev_fn in evaluation.items():
@@ -63,16 +61,16 @@ def train(model: nn.Module,
     return learning_data
 
 
-def evaluate(model: nn.Module,
-             device: str,
-             test_loader: DataLoader,
-             evaluation: Dict[str, Callable]) -> Dict[str, Union[int, float]]:
+def test(model: nn.Module,
+         device: str,
+         loader: DataLoader,
+         evaluation: Dict[str, Callable]) -> Dict[str, Any]:
 
     learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
-    test_loop = tqdm(test_loader, position=1, leave=True, desc='Test')
+    loop = tqdm(loader, position=1, leave=True, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
-        for batch_idx, (x, yt) in enumerate(test_loop):
+        for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
 
@@ -84,40 +82,45 @@ def evaluate(model: nn.Module,
     return learning_data
 
 
-def save_images(data: DataLoader,
-                device: str,
-                model: nn.Module,
-                epoch: int) -> dict[str, list[Any]]:
-    learning_data = {
-        'input_image': [],
-        'ground_truth': [],
-        'prediction': [],
-    }
+def plot_checkpoint(model: nn.Module,
+                    device: str,
+                    loader: DataLoader,
+                    image_to_show=-1) -> Dict[str, Any]:
+    _fpr = []
+    _tpr = []
+    _auc = []
+    display_x = None
+    display_yt = None
+    display_yp = None
 
-    # Pick the first image in the test set
-    for x, yt in data:
-        with torch.set_grad_enabled(False):
+    loop = tqdm(loader, position=1, leave=True, desc='Test')
+    with torch.set_grad_enabled(False):
+        model.eval()
+        for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
 
-            model.eval()
-            yp = model(x)
+            yp = F.softmax(model(x), dim=1)
 
-        # Get the numpy arrays
-        x = torch_2_array(x)
-        yt = torch_2_array(yt)
-        yp = torch_2_array(yp)
+            x = torch_2_array(x)
+            yt = torch_2_array(yt)
+            yp = torch_2_array(yp)
 
-        for i in range(x.shape[0]):
-            _x = PILImage.fromarray(x[i], mode='RGB')
-            _yt = PILImage.fromarray(yt[i], mode='RGB')
-            _yp = PILImage.fromarray(yp[i], mode='RGB')
+            for i in range(x.shape[0]):
+                fpr, tpr, _ = roc_curve(yt[i].ravel(), yp[i].ravel())
+                _fpr.append(fpr)
+                _tpr.append(tpr)
+                _auc.append(auc(fpr, tpr))
 
-            learning_data['input_image'].append(wandb.Image(_x, caption=f"Input image at {epoch}"))
-            learning_data['ground_truth'].append(wandb.Image(_yt, caption=f"Ground truth at {epoch}"))
-            learning_data['prediction'].append(wandb.Image(_yp, caption=f"Prediction at {epoch}"))
+                if True:
+                    display_x = x[i]
+                    display_yt = yt[i]
+                    display_yp = yp[i]
+                    image_to_show = batch_idx + i
 
-    return learning_data
+    fig, ax = plot_roc_and_samples(display_x, display_yt, display_yp, _fpr, _tpr, image_to_show)
+
+    return {'plot': fig}
 
 
 @argh.arg("epochs", type=int)
@@ -186,11 +189,9 @@ def main(epochs: int,
 
     train_data = SyntheticDataset('data/generated/png/train', transforms.ToTensor())
     test_data = SyntheticDataset('data/generated/png/test', transforms.ToTensor())
-    eval_data = SyntheticDataset('data/generated/png/eval', transforms.ToTensor())
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    eval_loader = torch.utils.data.DataLoader(eval_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.BCEWithLogitsLoss()
@@ -209,7 +210,7 @@ def main(epochs: int,
                               for k, v in train(model, device, train_loader, criterion, optimizer, evaluations).items()
                               })
         learning_data.update({f"test_{k}": v
-                              for k, v in evaluate(model, device, test_loader, evaluations).items()
+                              for k, v in test(model, device, test_loader, evaluations).items()
                               })
 
         learning_curve.append(learning_data)
@@ -218,8 +219,7 @@ def main(epochs: int,
         if save_path and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
             checkpoint_name = f"{model_name}-checkpoint-{epoch:04d}.pth"
             torch.save(model.state_dict(), save_path / checkpoint_name)
-
-            learning_data.update(save_images(eval_loader, device, model, epoch))
+            learning_data.update(plot_checkpoint(model, device, test_loader, image_to_show=0))
 
         wandb.log(learning_data)
 
