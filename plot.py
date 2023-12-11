@@ -5,12 +5,16 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import auc
 
 
-def plot_roc_and_samples(x: np.array,
-                    yt: np.array,
-                    yp: np.array,
-                    fpr: List[np.array],
-                    tpr: List[np.array],
-                    highlight: int = -1):
+def plot_roc_and_samples(
+        x: np.array,
+        yt: np.array,
+        yp: np.array,
+        fpr: List[np.array],
+        tpr: List[np.array],
+        mean_fpr: np.array,
+        mean_tpr: np.array,
+        mean_auc: float,
+        highlight: int = -1):
     fig, axs = plt.subplots(2, 4, figsize=(20, 10))
     axs[0, 0].imshow(x)
     axs[0, 1].imshow(yt)
@@ -32,11 +36,6 @@ def plot_roc_and_samples(x: np.array,
             alpha = 0.25
 
         axs[0, 3].plot(fpr[k], tpr[k], st, alpha=alpha)
-
-    mean_fpr = np.linspace(0.0, 1.0, 1000)
-    mean_tpr = np.mean([np.interp(mean_fpr, fpr[k], tpr[k]) for k in range(len(fpr))], axis=0)
-
-    mean_auc = auc(mean_fpr, mean_tpr)
 
     axs[0, 3].plot(mean_fpr, mean_tpr, 'r', label='Mean ROC', lw=2)
     axs[0, 3].plot([0, 1], [0, 1], 'k--')

@@ -8,6 +8,7 @@ import wandb
 import numpy as np
 import torch.optim
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.transforms as transforms
 
 from tqdm import tqdm
@@ -107,20 +108,33 @@ def plot_checkpoint(model: nn.Module,
             yp = torch_2_array(yp)
 
             for i in range(x.shape[0]):
-                fpr, tpr, _ = roc_curve(yt[i].ravel(), yp[i].ravel())
+                fpr, tpr, _ = roc_curve(yt[i].ravel(), yp[i].ravel(), pos_label=1)
                 _fpr.append(fpr)
                 _tpr.append(tpr)
                 _auc.append(auc(fpr, tpr))
 
-                if True:
+                if image_to_show == batch_idx + i:
                     display_x = x[i]
                     display_yt = yt[i]
                     display_yp = yp[i]
-                    image_to_show = batch_idx + i
 
-    fig, ax = plot_roc_and_samples(display_x, display_yt, display_yp, _fpr, _tpr, image_to_show)
+    mean_fpr = np.linspace(0.0, 1.0, 1000)
+    mean_tpr = np.mean([np.interp(mean_fpr, fpr, tpr) for fpr, tpr in zip(_fpr, _tpr)], axis=0)
 
-    return {'plot': fig}
+    mean_auc = auc(mean_fpr, mean_tpr)
+
+    fig, ax = plot_roc_and_samples(
+        display_x,
+        display_yt,
+        display_yp,
+        _fpr,
+        _tpr,
+        mean_fpr,
+        mean_tpr,
+        mean_auc,
+        image_to_show)
+
+    return {'plot': fig, 'mean_auc': mean_auc, 'mean_fpr': mean_fpr, 'mean_tpr': mean_tpr}
 
 
 @argh.arg("epochs", type=int)
@@ -226,11 +240,11 @@ def main(epochs: int,
     if save_path:
         torch.save(model.state_dict(), save_path / f"{model_name}.pth")
 
-        with open(save_path / "learning_curve.tsv", "w", newline="") as f:
-            fields = list(learning_curve[0].keys())
-            writer = csv.DictWriter(f, fields, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(learning_curve)
+        # with open(save_path / "learning_curve.tsv", "w", newline="") as f:
+        #     fields = list(learning_curve[0].keys())
+        #     writer = csv.DictWriter(f, fields, delimiter="\t")
+        #     writer.writeheader()
+        #     writer.writerows(learning_curve)
 
     wandb.finish()
 
