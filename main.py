@@ -138,7 +138,7 @@ def plot_checkpoint(model: nn.Module,
 
 
 @argh.arg("epochs", type=int)
-@argh.arg("model-name", type=str, choices=['unet', 'runet'])
+@argh.arg("model-name", type=str, choices=['unet', 'runet', 'runetfc'])
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--learning-rate", type=float, default=1e-4)
@@ -196,6 +196,8 @@ def main(epochs: int,
         model = UNet(1, 2)
     elif model_name == 'runet':
         model = RUNet(1, 2)
+    elif model_name == 'runetfc':
+        model = RUNetFC(1, 2)
     else:
         raise ValueError
 
