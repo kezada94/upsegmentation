@@ -53,7 +53,8 @@ def train(model: nn.Module,
           evaluation: Evaluations,
           device: torch.device,
           criterion: nn.Module,
-          optimizer: torch.optim.Optimizer) -> Dict[str, Any]:
+          optimizer: torch.optim.Optimizer,
+          balance_classes: bool = False) -> Dict[str, Any]:
 
     evaluation.reset()
     log_data = {'loss': 0.0}
@@ -69,7 +70,12 @@ def train(model: nn.Module,
 
             optimizer.zero_grad()
             one_hot_yp = model(x)
-            loss = criterion(one_hot_yp, one_hot_yt)
+            if balance_classes:
+                pos_weight = one_hot_yt.sum(dim=(0, 2, 3), keepdim=True)[0, :, :, :]
+                pos_weight = 1.0 / (pos_weight + 1e-8)
+                loss = criterion(one_hot_yp, one_hot_yt, pos_weight=pos_weight)
+            else:
+                loss = criterion(one_hot_yp, one_hot_yt)
             loss.backward()
             optimizer.step()
 
@@ -145,6 +151,8 @@ class CustomTransform:
 
 @argh.arg("epochs", type=int)
 @argh.arg("model-name", type=str, choices=['unet', 'runet', 'runetfc'])
+@argh.arg("--optimizer", type=str, default='adam')
+@argh.arg("--balance-classes", default=False)
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--learning-rate", type=float, default=1e-4)
@@ -155,6 +163,7 @@ class CustomTransform:
 def main(epochs: int,
          model_name: str,
          optimizer: str = 'adam',
+         balance_classes: bool = False,
          use_cuda: bool = True,
          batch_size=64,
          learning_rate=1e-4,
@@ -176,6 +185,7 @@ def main(epochs: int,
                    "device": device,
                    "batch_size": batch_size,
                    "optimizer": optimizer,
+                   "balance_classes": balance_classes,
                    "learning_rate": learning_rate,
                    "num_workers": num_workers,
                    "seed": seed,
@@ -233,7 +243,7 @@ def main(epochs: int,
     for epoch in loop:
         log_data = {}
 
-        train_log = train(model, train_loader, evaluations, device, criterion, optimizer)
+        train_log = train(model, train_loader, evaluations, device, criterion, optimizer, balance_classes)
         test_log = test(model, test_loader, evaluations, device)
 
         log_data.update({f"train_{k}": v for k, v in train_log.items()})
