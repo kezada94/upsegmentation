@@ -228,7 +228,7 @@ def main(epochs: int,
     if balance_classes is None:
         criterion = nn.BCEWithLogitsLoss()
     else:
-        criterion = nn.CrossEntropyLoss(weight=torch.tensor(balance_classes).to(device))
+        criterion = nn.CrossEntropyLoss(weight=torch.tensor(balance_classes).to(device) / sum(balance_classes))
 
     evaluations = Evaluations([
         'accuracy',
