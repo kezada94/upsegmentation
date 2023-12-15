@@ -14,6 +14,7 @@ dependencies:
   - pillow
   - matplotlib
   - scikit-learn
+  - scikit-image
   - svgutils
   - wandb
   - pip

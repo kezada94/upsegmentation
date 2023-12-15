@@ -11,6 +11,7 @@ import torchvision.transforms.functional as TF
 
 from tqdm import tqdm
 from PIL import ImageOps
+from skimage.transform import resize
 from torch.utils.data import DataLoader
 
 from models import *
@@ -85,6 +86,7 @@ def test(model: nn.Module,
          loader: DataLoader,
          evaluation: Evaluations,
          device: torch.device) -> Dict[str, Any]:
+    class_labels = {0: "background", 1: "border"}
     evaluation.reset()
     log_data = {}
     loop = tqdm(loader, desc='Test')
@@ -95,6 +97,28 @@ def test(model: nn.Module,
             yt = yt.to(device)
             yp = torch.argmax(model(x), dim=1)
             log_data.update(evaluation(yt, yp))
+
+            if batch_idx == 0:
+                log_data['prediction'] = []
+                for img_idx in range(len(x)):
+                    x_img = x[img_idx].detach().cpu().numpy()
+                    yp_img = yp[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
+                    yt_img = yt[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
+
+                    x_img = np.transpose(x_img, (1, 2, 0))
+                    x_img = resize(x_img, yp_img.shape, anti_aliasing=True)
+
+                    log_data['prediction'].append(
+                        wandb.Image(
+                            x_img,
+                            masks={
+                                "predictions": {"mask_data": yp_img, "class_labels": class_labels},
+                                "ground_truth": {"mask_data": yt_img, "class_labels": class_labels},
+                            },
+                            caption=f"Image {batch_idx + img_idx}",
+                        )
+                    )
+
             loop.set_postfix(log_data)
     return log_data
 
@@ -130,6 +154,7 @@ class CustomTransform:
 @argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
          model_name: str,
+         optimizer: str = 'adam',
          use_cuda: bool = True,
          batch_size=64,
          learning_rate=1e-4,
@@ -150,6 +175,7 @@ def main(epochs: int,
                    "model": model_name,
                    "device": device,
                    "batch_size": batch_size,
+                   "optimizer": optimizer,
                    "learning_rate": learning_rate,
                    "num_workers": num_workers,
                    "seed": seed,
@@ -192,7 +218,11 @@ def main(epochs: int,
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    if optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    else:
+        raise ValueError
+
     criterion = nn.BCEWithLogitsLoss()
 
     evaluations = Evaluations([
@@ -202,7 +232,7 @@ def main(epochs: int,
         'f1_score',
     ])
 
-    loop = tqdm(range(epochs), desc='Train')
+    loop = tqdm(range(epochs), desc='Main')
     for epoch in loop:
         log_data = {}
 
@@ -218,7 +248,6 @@ def main(epochs: int,
             save_checkpoint(model, optimizer, epoch, save_path, f"{model_name}-checkpoint-{epoch:04d}.pth")
 
         wandb.log(log_data)
-
 
     if save_path:
         torch.save(model.state_dict(), save_path / f"{model_name}.pth")
