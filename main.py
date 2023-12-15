@@ -1,4 +1,3 @@
-import csv
 import random
 from pathlib import Path
 from typing import Dict, Callable, Any
@@ -8,133 +7,116 @@ import wandb
 import numpy as np
 import torch.optim
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
+import torchvision.transforms.functional as TF
 
 from tqdm import tqdm
+from PIL import ImageOps
 from torch.utils.data import DataLoader
-from sklearn.metrics import roc_curve, auc
 
 from models import *
-from dataset import SyntheticDataset
 from evaluations import *
-from plot import plot_roc_and_samples
+from dataset import SyntheticDataset
 
 
-def torch_2_array(x: torch.Tensor) -> np.ndarray:
-    x = x.detach().cpu().numpy()
-    x = np.repeat(x[:, 0, :, :][:, None, :, :], 3, axis=1)
-    x = np.transpose(x, (0, 2, 3, 1))
-    x = (np.clip(x, 0, 1) * 255).astype('uint8')
-    return x
+def save_checkpoint(model: nn.Module,
+                    optimizer: torch.optim.Optimizer,
+                    epoch: int,
+                    path: Path,
+                    name: str,
+                    verbose: bool = True) -> None:
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+    }, path / f'{name}.pth')
+
+    if verbose:
+        print(f'Checkpoint saved as {name}.pth')
+
+
+def load_checkpoint(model: nn.Module,
+                    optimizer: torch.optim.Optimizer,
+                    path: Path,
+                    name: str,
+                    verbose: bool = True) -> int:
+    if verbose:
+        print(f'Loading checkpoint from {name}.pth')
+    checkpoint = torch.load(path / f'{name}.pth')
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    return checkpoint['epoch']
 
 
 def train(model: nn.Module,
-          device: str,
           loader: DataLoader,
+          evaluation: Evaluations,
+          device: torch.device,
           criterion: nn.Module,
-          optimizer: torch.optim.Optimizer,
-          evaluation: Dict[str, Callable]) -> Dict[str, Any]:
+          optimizer: torch.optim.Optimizer) -> Dict[str, Any]:
 
-    learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
-    learning_data['loss'] = 0.0
-    loop = tqdm(loader, position=1, leave=True, desc='Train')
+    evaluation.reset()
+    log_data = {'loss': 0.0}
+    loop = tqdm(loader, desc='Train')
     with torch.set_grad_enabled(True):
         model.train()
         for batch_idx, (x, yt) in enumerate(loop):
+            one_hot_yt = torch.nn.functional.one_hot(yt, -1).transpose(1, 4).squeeze(-1).to(torch.float32)
+
             x = x.to(device)
             yt = yt.to(device)
+            one_hot_yt = one_hot_yt.to(device)
 
             optimizer.zero_grad()
-            yp = model(x)
-            loss = criterion(yp, yt)
+            one_hot_yp = model(x)
+            loss = criterion(one_hot_yp, one_hot_yt)
             loss.backward()
             optimizer.step()
 
             batch_loss = loss.item()
+            log_data['loss'] += batch_loss
 
-            loop.set_postfix(loss=batch_loss)
-            learning_data['loss'] += batch_loss
-
-            for ev_name, ev_fn in evaluation.items():
-                learning_data[ev_name] += ev_fn(yp, yt)
-
-    return learning_data
+            yp = torch.argmax(one_hot_yp, dim=1)
+            log_data.update(evaluation(yt, yp))
+            loop.set_postfix(log_data)
+    return log_data
 
 
 def test(model: nn.Module,
-         device: str,
          loader: DataLoader,
-         evaluation: Dict[str, Callable]) -> Dict[str, Any]:
-
-    learning_data = {ev_name: 0.0 for ev_name in evaluation.keys()}
-    loop = tqdm(loader, position=1, leave=True, desc='Test')
+         evaluation: Evaluations,
+         device: torch.device) -> Dict[str, Any]:
+    evaluation.reset()
+    log_data = {}
+    loop = tqdm(loader, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
         for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
-
-            yp = model(x)
-
-            for ev_name, ev_fn in evaluation.items():
-                learning_data[ev_name] += ev_fn(yp, yt)
-
-    return learning_data
+            yp = torch.argmax(model(x), dim=1)
+            log_data.update(evaluation(yt, yp))
+            loop.set_postfix(log_data)
+    return log_data
 
 
-def plot_checkpoint(model: nn.Module,
-                    device: str,
-                    loader: DataLoader,
-                    image_to_show=-1) -> Dict[str, Any]:
-    _fpr = []
-    _tpr = []
-    _auc = []
-    display_x = None
-    display_yt = None
-    display_yp = None
+class CustomTransform:
+    def __init__(self, device, n_classes, mean=0, std=1):
+        self.device = device
+        self.n_classes = n_classes
+        self.mean = mean
+        self.std = std
 
-    loop = tqdm(loader, position=1, leave=True, desc='Test')
-    with torch.set_grad_enabled(False):
-        model.eval()
-        for batch_idx, (x, yt) in enumerate(loop):
-            x = x.to(device)
-            yt = yt.to(device)
+    def __call__(self, x, y):
+        x = ImageOps.grayscale(x)
+        x = TF.to_tensor(x)
+        x = TF.normalize(x, mean=self.mean, std=self.std)
+        x = x.to(torch.float32)
 
-            yp = F.softmax(model(x), dim=1)
+        y = TF.pil_to_tensor(y) / 255
+        y = y.to(torch.uint8)
+        y = y.to(torch.long)
 
-            x = torch_2_array(x)
-            yt = torch_2_array(yt)
-            yp = torch_2_array(yp)
-
-            for i in range(x.shape[0]):
-                fpr, tpr, _ = roc_curve(yt[i].ravel(), yp[i].ravel(), pos_label=1)
-                _fpr.append(fpr)
-                _tpr.append(tpr)
-                _auc.append(auc(fpr, tpr))
-
-                if image_to_show == batch_idx + i:
-                    display_x = x[i]
-                    display_yt = yt[i]
-                    display_yp = yp[i]
-
-    mean_fpr = np.linspace(0.0, 1.0, 1000)
-    mean_tpr = np.mean([np.interp(mean_fpr, fpr, tpr) for fpr, tpr in zip(_fpr, _tpr)], axis=0)
-
-    mean_auc = auc(mean_fpr, mean_tpr)
-
-    fig, ax = plot_roc_and_samples(
-        display_x,
-        display_yt,
-        display_yp,
-        _fpr,
-        _tpr,
-        mean_fpr,
-        mean_tpr,
-        mean_auc,
-        image_to_show)
-
-    return {'plot': fig, 'mean_auc': mean_auc, 'mean_fpr': mean_fpr, 'mean_tpr': mean_tpr}
+        return x, y
 
 
 @argh.arg("epochs", type=int)
@@ -143,7 +125,7 @@ def plot_checkpoint(model: nn.Module,
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--learning-rate", type=float, default=1e-4)
 @argh.arg("--num-workers", type=int, default=4)
-@argh.arg("--checkpoint-epoch", type=int, default=10)
+@argh.arg("--checkpoint-epoch", type=int, default=None)
 @argh.arg("--save-path", type=Path, default=None)
 @argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
@@ -152,7 +134,7 @@ def main(epochs: int,
          batch_size=64,
          learning_rate=1e-4,
          num_workers=4,
-         checkpoint_epoch: int = 10,
+         checkpoint_epoch: int = None,
          save_path: Path = None,
          seed: int = None):
 
@@ -181,7 +163,8 @@ def main(epochs: int,
     if save_path:
         save_path.mkdir(parents=True, exist_ok=True)
 
-    print('Saving checkpoints to', save_path)
+    if checkpoint_epoch is not None:
+        print('Saving checkpoints to', save_path)
 
     if seed is not None:
         np.random.seed(seed)
@@ -189,22 +172,22 @@ def main(epochs: int,
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
-        # torch.backends.cudnn.deterministic = True
-        # torch.backends.cudnn.benchmark = False
 
-    if model_name == 'unet':
-        model = UNet(1, 2)
     elif model_name == 'runet':
         model = RUNet(1, 2)
+
     elif model_name == 'runetfc':
         model = RUNetFC(1, 2)
+
     else:
         raise ValueError
 
     model = model.to(device)
 
-    train_data = SyntheticDataset('data/generated/png/train', transforms.ToTensor())
-    test_data = SyntheticDataset('data/generated/png/test', transforms.ToTensor())
+    base_transform = CustomTransform(device, n_classes=2, mean=[0.49932378], std=[0.18392171])
+
+    train_data = SyntheticDataset('data/SynthPokemonSegmentation/train', transform=base_transform)
+    test_data = SyntheticDataset('data/SynthPokemonSegmentation/test', transform=base_transform)
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -212,41 +195,33 @@ def main(epochs: int,
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = nn.BCEWithLogitsLoss()
 
-    evaluations = {
-        'accuracy': accuracy,
-    }
+    evaluations = Evaluations([
+        'accuracy',
+        'precision',
+        'recall',
+        'f1_score',
+    ])
 
-    learning_curve = []
+    loop = tqdm(range(epochs), desc='Train')
+    for epoch in loop:
+        log_data = {}
 
-    epoch_loop = tqdm(range(epochs), position=0, desc='Epoch', leave=True)
-    for epoch in epoch_loop:
-        learning_data = {'epoch': epoch}
+        train_log = train(model, train_loader, evaluations, device, criterion, optimizer)
+        test_log = test(model, test_loader, evaluations, device)
 
-        learning_data.update({f"train_{k}": v
-                              for k, v in train(model, device, train_loader, criterion, optimizer, evaluations).items()
-                              })
-        learning_data.update({f"test_{k}": v
-                              for k, v in test(model, device, test_loader, evaluations).items()
-                              })
+        log_data.update({f"train_{k}": v for k, v in train_log.items()})
+        log_data.update({f"test_{k}": v for k, v in test_log.items()})
 
-        learning_curve.append(learning_data)
-        epoch_loop.set_postfix(learning_data)
+        loop.set_postfix(log_data)
 
-        if save_path and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
-            checkpoint_name = f"{model_name}-checkpoint-{epoch:04d}.pth"
-            torch.save(model.state_dict(), save_path / checkpoint_name)
-            learning_data.update(plot_checkpoint(model, device, test_loader, image_to_show=0))
+        if save_path and checkpoint_epoch is not None and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
+            save_checkpoint(model, optimizer, epoch, save_path, f"{model_name}-checkpoint-{epoch:04d}.pth")
 
-        wandb.log(learning_data)
+        wandb.log(log_data)
+
 
     if save_path:
         torch.save(model.state_dict(), save_path / f"{model_name}.pth")
-
-        # with open(save_path / "learning_curve.tsv", "w", newline="") as f:
-        #     fields = list(learning_curve[0].keys())
-        #     writer = csv.DictWriter(f, fields, delimiter="\t")
-        #     writer.writeheader()
-        #     writer.writerows(learning_curve)
 
     wandb.finish()
 
