@@ -1,6 +1,6 @@
 import random
 from pathlib import Path
-from typing import Dict, Callable, Any
+from typing import Dict, Any
 
 import argh
 import wandb
@@ -199,11 +199,8 @@ def main(epochs: int,
         if torch.cuda.is_available():
             torch.cuda.manual_seed(seed)
 
-    elif model_name == 'runet':
+    if model_name == 'runet':
         model = RUNet(1, 2)
-
-    elif model_name == 'runetfc':
-        model = RUNetFC(1, 2)
 
     else:
         raise ValueError
