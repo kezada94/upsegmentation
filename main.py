@@ -1,3 +1,4 @@
+import json
 import random
 from pathlib import Path
 from typing import Tuple, Dict, Any
@@ -90,6 +91,7 @@ def test(model: nn.Module,
     class_labels = {0: "background", 1: "border"}
     evaluation.reset()
     log_data = {}
+    predictions = []
     loop = tqdm(loader, desc='Test')
     with torch.set_grad_enabled(False):
         model.eval()
@@ -100,16 +102,15 @@ def test(model: nn.Module,
             log_data.update(evaluation(yt, yp))
 
             if batch_idx == 0:
-                log_data['prediction'] = []
                 for img_idx in range(len(x)):
                     x_img = x[img_idx].detach().cpu().numpy()
                     yp_img = yp[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
                     yt_img = yt[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
 
                     x_img = np.transpose(x_img, (1, 2, 0))
-                    x_img = resize(x_img, yp_img.shape, anti_aliasing=True)
+                    x_img = resize(x_img, yp_img.shape, anti_aliasing=False)
 
-                    log_data['prediction'].append(
+                    predictions.append(
                         wandb.Image(
                             x_img,
                             masks={
@@ -121,6 +122,7 @@ def test(model: nn.Module,
                     )
 
             loop.set_postfix(log_data)
+    log_data['prediction'] = predictions
     return log_data
 
 
@@ -146,6 +148,9 @@ class CustomTransform:
 
 @argh.arg("epochs", type=int)
 @argh.arg("model-name", type=str, choices=['runet'])
+@argh.arg("dataset-path", type=Path)
+@argh.arg("in-size", type=int)
+@argh.arg("scale", type=int)
 @argh.arg("--optimizer", type=str, default='adam')
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--learning-rate", type=float, default=1e-4)
@@ -157,6 +162,9 @@ class CustomTransform:
 @argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
          model_name: str,
+         dataset_path: Path,
+         in_size: int,
+         scale: int,
          optimizer: str = 'adam',
          batch_size=64,
          learning_rate=1e-4,
@@ -177,6 +185,8 @@ def main(epochs: int,
                config={
                    "epochs": epochs,
                    "model": model_name,
+                   "in_size": in_size,
+                   "scale": scale,
                    "device": device,
                    "batch_size": batch_size,
                    "optimizer": optimizer,
@@ -205,17 +215,25 @@ def main(epochs: int,
             torch.cuda.manual_seed(seed)
 
     if model_name == 'runet':
-        model = RUNet(1, 2)
+        model = RUNet(1, 2, scale=scale)
 
     else:
         raise ValueError
 
     model = model.to(device)
 
-    base_transform = CustomTransform(device, n_classes=2, mean=[0.49932378], std=[0.18392171])
+    train_dataset_path = dataset_path / str(in_size) / "train"
+    test_dataset_path = dataset_path / str(in_size * scale) / "test"
 
-    train_data = SyntheticDataset('data/SynthPokemonSegmentation/train', transform=base_transform)
-    test_data = SyntheticDataset('data/SynthPokemonSegmentation/test', transform=base_transform)
+    with (train_dataset_path / 'mean_std.json').open('r', encoding='utf-8') as f:
+        mean_std = json.load(f)
+        mean = mean_std['gray_mean']
+        std = mean_std['gray_std']
+
+    base_transform = CustomTransform(device, n_classes=2, mean=mean, std=std)
+
+    train_data = SyntheticDataset(train_dataset_path, transform=base_transform)
+    test_data = SyntheticDataset(test_dataset_path, transform=base_transform)
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)

@@ -46,8 +46,12 @@ def bottleneck(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), pad
 
 
 class RUNet(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, scale):
         super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.scale = scale
+
         self.down1 = nn.Sequential(
             nn.Conv2d(in_channels, 64, (7, 7), stride=(1, 1), padding='same'),
             nn.BatchNorm2d(64),
@@ -101,7 +105,7 @@ class RUNet(nn.Module):
         self.out = nn.Conv2d(99, out_channels, (1, 1), padding='same')
 
     def forward(self, x):
-        x = F.interpolate(x, scale_factor=2, mode='bilinear')
+        x = F.interpolate(x, scale_factor=self.scale, mode='bilinear')
         d1 = self.down1(x)
         d2 = self.down2(d1)
         d3 = self.down3(d2)
