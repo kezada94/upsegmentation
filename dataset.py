@@ -5,8 +5,6 @@ import numpy as np
 from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 
-from utils import parallel_average
-
 
 class SyntheticDataset(Dataset):
     def __init__(self, path, transform=None, grayscale=True):

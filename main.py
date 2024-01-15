@@ -1,7 +1,7 @@
 import json
 import random
 from pathlib import Path
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Union
 
 import argh
 import wandb
@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 from models import *
 from evaluations import *
 from dataset import SyntheticDataset
+from utils import FloatAction
 
 
 def save_checkpoint(model: nn.Module,
@@ -52,7 +53,7 @@ def load_checkpoint(model: nn.Module,
 def train(model: nn.Module,
           loader: DataLoader,
           evaluation: Evaluations,
-          device: torch.device,
+          device: Union[torch.device, str],
           criterion: nn.Module,
           optimizer: torch.optim.Optimizer) -> Dict[str, Any]:
 
@@ -87,7 +88,7 @@ def train(model: nn.Module,
 def test(model: nn.Module,
          loader: DataLoader,
          evaluation: Evaluations,
-         device: torch.device) -> Dict[str, Any]:
+         device: Union[torch.device, str]) -> Dict[str, Any]:
     class_labels = {0: "background", 1: "border"}
     evaluation.reset()
     log_data = {}
@@ -148,9 +149,12 @@ class CustomTransform:
 
 @argh.arg("epochs", type=int)
 @argh.arg("model-name", type=str, choices=['runet'])
+@argh.arg("block-type", type=str, choices=['ResNet', 'MobileNetV2'])
 @argh.arg("dataset-path", type=Path)
 @argh.arg("in-size", type=int)
 @argh.arg("scale", type=int)
+@argh.arg("--mean", type=float, nargs='+', action=FloatAction, default=0)
+@argh.arg("--stdev", type=float, nargs='+', action=FloatAction, default=1)
 @argh.arg("--optimizer", type=str, default='adam')
 @argh.arg("--batch-size", type=int, default=64)
 @argh.arg("--learning-rate", type=float, default=1e-4)
@@ -162,9 +166,12 @@ class CustomTransform:
 @argh.arg("--seed", type=int, default=None)
 def main(epochs: int,
          model_name: str,
+         block_type: str,
          dataset_path: Path,
          in_size: int,
          scale: int,
+         mean: Union[float, Tuple[float, float, float]] = 0,
+         stdev: Union[float, Tuple[float, float, float]] = 1,
          optimizer: str = 'adam',
          batch_size=64,
          learning_rate=1e-4,
@@ -185,8 +192,11 @@ def main(epochs: int,
                config={
                    "epochs": epochs,
                    "model": model_name,
+                   "block_type": block_type,
                    "in_size": in_size,
                    "scale": scale,
+                   "mean": mean,
+                   "stdev": stdev,
                    "device": device,
                    "batch_size": batch_size,
                    "optimizer": optimizer,
@@ -215,22 +225,23 @@ def main(epochs: int,
             torch.cuda.manual_seed(seed)
 
     if model_name == 'runet':
-        model = RUNet(1, 2, scale=scale)
+        model = RUNet(1, 2, scale=scale, down_block=block_type)
 
     else:
-        raise ValueError
+        raise ValueError()
 
     model = model.to(device)
 
-    train_dataset_path = dataset_path / str(in_size) / "train"
-    test_dataset_path = dataset_path / str(in_size * scale) / "test"
+    train_dataset_path = dataset_path / "train" / str(in_size)
+    test_dataset_path = dataset_path / "test" / str(in_size * scale)
 
-    with (train_dataset_path / 'mean_std.json').open('r', encoding='utf-8') as f:
-        mean_std = json.load(f)
-        mean = mean_std['gray_mean']
-        std = mean_std['gray_std']
+    if not train_dataset_path.exists():
+        raise Exception(f"{train_dataset_path.relative_to(dataset_path)} does not exist.")
 
-    base_transform = CustomTransform(device, n_classes=2, mean=mean, std=std)
+    if not test_dataset_path.exists():
+        raise Exception(f"{test_dataset_path.relative_to(dataset_path)} does not exist.")
+
+    base_transform = CustomTransform(device, n_classes=2, mean=np.float32(mean), std=np.float32(stdev))
 
     train_data = SyntheticDataset(train_dataset_path, transform=base_transform)
     test_data = SyntheticDataset(test_dataset_path, transform=base_transform)

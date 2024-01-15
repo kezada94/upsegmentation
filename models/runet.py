@@ -5,31 +5,54 @@ import torch.nn.functional as F
 
 # Based on https://github.com/cerniello/Super_Resolution_DNN/blob/master/NN_Final_Project_3_Moschettieri.ipynb
 
-class DownBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding='same', r=False):
+class ResNetDownBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, residual_path=False):
         super().__init__()
         self.path_a = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
+            nn.Conv2d(in_channels, out_channels, (3, 3), (1, 1), 'same'),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(),
-            nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
+            nn.Conv2d(out_channels, out_channels, (3, 3), (1, 1), 'same'),
             nn.BatchNorm2d(out_channels)
         )
-        self.path_b = nn.Conv2d(in_channels, out_channels, (1, 1), stride, padding) if r else nn.Identity()
+        self.path_b = nn.Conv2d(in_channels, out_channels, (1, 1), (1, 1), 'same') if residual_path else nn.Identity()
 
     def forward(self, x):
         return self.path_a(x) + self.path_b(x)
 
 
+class MobileNetV2DownBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, depth_wise_multiplier=2, residual_path=False):
+        super().__init__()
+
+        self.residual_path = residual_path
+        depth_wise_out_channels = depth_wise_multiplier * out_channels
+
+        self.path_a = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, (1, 1), stride=(1, 1), padding='same'),
+            nn.ReLU6(),
+            nn.Conv2d(out_channels, depth_wise_out_channels, (3, 3), stride=(1, 1) if residual_path else (2, 2), padding='same', groups=out_channels),
+            nn.ReLU6(),
+            nn.Conv2d(depth_wise_out_channels, out_channels, (1, 1), stride=(1, 1), padding='same'),
+            nn.Linear(out_channels, out_channels)
+        )
+
+    def forward(self, x):
+        y = self.path_a(x)
+        if self.residual_path:
+            y = y + x
+        return y
+
+
 class UpBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), padding='same', upscale_factor=2):
+    def __init__(self, in_channels, out_channels, upscale_factor=2):
         super().__init__()
         self.upscale = nn.PixelShuffle(upscale_factor)
         self.path = nn.Sequential(
             nn.BatchNorm2d(in_channels),
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
+            nn.Conv2d(in_channels, out_channels, (3, 3), (1, 1), 'same'),
             nn.ReLU(),
-            nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
+            nn.Conv2d(out_channels, out_channels, (3, 3), (1, 1), 'same'),
             nn.ReLU(),
             nn.ReLU()
         )
@@ -46,11 +69,19 @@ def bottleneck(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), pad
 
 
 class RUNet(nn.Module):
-    def __init__(self, in_channels, out_channels, scale):
+    def __init__(self, in_channels, out_channels, scale, down_block='ResNet'):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.scale = scale
+        self.down_block = down_block
+
+        if self.down_block == 'ResNet':
+            down_block = ResNetDownBlock
+        elif self.down_block == 'MobileNetV2':
+            down_block = MobileNetV2DownBlock
+        else:
+            raise ValueError()
 
         self.down1 = nn.Sequential(
             nn.Conv2d(in_channels, 64, (7, 7), stride=(1, 1), padding='same'),
@@ -59,31 +90,31 @@ class RUNet(nn.Module):
         )
         self.down2 = nn.Sequential(
             nn.MaxPool2d((2, 2)),
-            DownBlock(64, 64),
-            DownBlock(64, 64),
-            DownBlock(64, 64),
-            DownBlock(64, 128, r=True)
+            down_block(64, 64),
+            down_block(64, 64),
+            down_block(64, 64),
+            down_block(64, 128, residual_path=True)
         )
         self.down3 = nn.Sequential(
             nn.MaxPool2d((2, 2), stride=(2, 2)),
-            DownBlock(128, 128),
-            DownBlock(128, 128),
-            DownBlock(128, 128),
-            DownBlock(128, 256, r=True)
+            down_block(128, 128),
+            down_block(128, 128),
+            down_block(128, 128),
+            down_block(128, 256, residual_path=True)
         )
         self.down4 = nn.Sequential(
             nn.MaxPool2d((2, 2)),
-            DownBlock(256, 256),
-            DownBlock(256, 256),
-            DownBlock(256, 256),
-            DownBlock(256, 256),
-            DownBlock(256, 256),
-            DownBlock(256, 512, r=True)
+            down_block(256, 256),
+            down_block(256, 256),
+            down_block(256, 256),
+            down_block(256, 256),
+            down_block(256, 256),
+            down_block(256, 512, residual_path=True)
         )
         self.down5 = nn.Sequential(
             nn.MaxPool2d((2, 2)),
-            DownBlock(512, 512),
-            DownBlock(512, 512),
+            down_block(512, 512),
+            down_block(512, 512),
             nn.BatchNorm2d(512),
             nn.ReLU()
         )
