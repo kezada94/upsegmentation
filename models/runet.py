@@ -28,17 +28,23 @@ class MobileNetV2DownBlock(nn.Module):
         self.residual_path = residual_path
         depth_wise_out_channels = depth_wise_multiplier * out_channels
 
-        self.path_a = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, (1, 1), stride=(1, 1), padding='same'),
-            nn.ReLU6(),
-            nn.Conv2d(out_channels, depth_wise_out_channels, (3, 3), stride=(1, 1) if residual_path else (2, 2), padding='same', groups=out_channels),
-            nn.ReLU6(),
-            nn.Conv2d(depth_wise_out_channels, out_channels, (1, 1), stride=(1, 1), padding='same'),
-            nn.Linear(out_channels, out_channels)
-        )
+        self.conv1 = nn.Conv2d(in_channels, out_channels, (1, 1), stride=(1, 1), padding='same')
+        self.depth_wise = nn.Conv2d(out_channels, depth_wise_out_channels, (3, 3), stride=(1, 1) if residual_path else (2, 2), padding='same', groups=out_channels)
+        self.conv2 = nn.Conv2d(depth_wise_out_channels, out_channels, (1, 1), stride=(1, 1), padding='same')
+        self.linear = nn.Linear(out_channels, out_channels)
 
     def forward(self, x):
-        y = self.path_a(x)
+        y = self.conv1(x)
+        y = F.relu6(y)
+        y = self.depth_wise(y)
+        y = F.relu6(y)
+        y = self.conv2(y)
+        y = torch.permute(y, (0, 2, 3, 1))
+        y = self.linear(y)
+        y = torch.permute(y, (0, 3, 1, 2))
+
+        print(x.shape, y.shape)
+
         if self.residual_path:
             y = y + x
         return y
