@@ -5,6 +5,9 @@ import numpy as np
 from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 
+import torch
+from torchvision.transforms.functional import pil_to_tensor
+
 
 class SyntheticDataset(Dataset):
     def __init__(self, path, transform=None, grayscale=True):
@@ -23,8 +26,17 @@ class SyntheticDataset(Dataset):
         image = self.images[index]
         target = self.targets[index]
 
-        image = Image.open(str(image))
-        target = Image.open(str(target))
+        image = Image.open(str(image)).convert('RGB')
+        target = Image.open(str(target)).convert('RGB')
+
+        if self.grayscale:
+            image = ImageOps.grayscale(image)
+
+        image = pil_to_tensor(image).to(torch.float32)
+        target = pil_to_tensor(target).to(torch.float32)
+
+        image = image / 255.0
+        target = target / 255.0
 
         if self.transform:
             image, target = self.transform(image, target)

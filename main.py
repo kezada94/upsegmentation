@@ -8,7 +8,6 @@ import wandb
 import numpy as np
 import torch.optim
 import torch.nn as nn
-import torchvision.transforms.functional as TF
 
 from tqdm import tqdm
 from PIL import ImageOps
@@ -18,7 +17,7 @@ from torch.utils.data import DataLoader
 from models import *
 from evaluations import *
 from dataset import SyntheticDataset
-from utils import FloatAction
+from utils import FloatAction, labels_to_one_hot, one_hot_to_labels
 
 
 def save_checkpoint(model: nn.Module,
@@ -63,7 +62,7 @@ def train(model: nn.Module,
     with torch.set_grad_enabled(True):
         model.train()
         for batch_idx, (x, yt) in enumerate(loop):
-            one_hot_yt = torch.nn.functional.one_hot(yt, -1).transpose(1, 4).squeeze(-1).to(torch.float32)
+            one_hot_yt = labels_to_one_hot(yt).to(torch.float32)
 
             x = x.to(device)
             yt = yt.to(device)
@@ -71,7 +70,6 @@ def train(model: nn.Module,
 
             optimizer.zero_grad()
             one_hot_yp = model(x)
-
             loss = criterion(one_hot_yp, one_hot_yt)
             loss.backward()
             optimizer.step()
@@ -79,7 +77,7 @@ def train(model: nn.Module,
             batch_loss = loss.item()
             log_data['loss'] += batch_loss
 
-            yp = torch.argmax(one_hot_yp, dim=1)
+            yp = one_hot_to_labels(one_hot_yp)
             log_data.update(evaluation(yt, yp))
             loop.set_postfix(log_data)
     return log_data
@@ -99,7 +97,7 @@ def test(model: nn.Module,
         for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
-            yp = torch.argmax(model(x), dim=1)
+            yp = one_hot_to_labels(model(x))
             log_data.update(evaluation(yt, yp))
 
             if batch_idx == 0:
@@ -128,22 +126,12 @@ def test(model: nn.Module,
 
 
 class CustomTransform:
-    def __init__(self, device, n_classes, mean=0, std=1):
-        self.device = device
-        self.n_classes = n_classes
+    def __init__(self, mean=0, std=1):
         self.mean = mean
         self.std = std
 
     def __call__(self, x, y):
-        x = ImageOps.grayscale(x)
-        x = TF.to_tensor(x)
-        x = TF.normalize(x, mean=self.mean, std=self.std)
-        x = x.to(torch.float32)
-
-        y = TF.pil_to_tensor(y) / 255
-        y = y.to(torch.uint8)
-        y = y.to(torch.long)
-
+        x = (x - self.mean) / self.std
         return x, y
 
 
@@ -241,7 +229,7 @@ def main(epochs: int,
     if not test_dataset_path.exists():
         raise Exception(f"{test_dataset_path.relative_to(dataset_path)} does not exist.")
 
-    base_transform = CustomTransform(device, n_classes=2, mean=np.float32(mean), std=np.float32(stdev))
+    base_transform = CustomTransform(device, std=np.float32(stdev))
 
     train_data = SyntheticDataset(train_dataset_path, transform=base_transform)
     test_data = SyntheticDataset(test_dataset_path, transform=base_transform)
