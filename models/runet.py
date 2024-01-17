@@ -75,16 +75,16 @@ def bottleneck(in_channels, out_channels, kernel_size=(3, 3), stride=(1, 1), pad
 
 
 class RUNet(nn.Module):
-    def __init__(self, in_channels, out_channels, scale, down_block='ResNet'):
+    def __init__(self, in_channels, out_channels, scale, down_block='resnet'):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.scale = scale
         self.down_block = down_block
 
-        if self.down_block == 'ResNet':
+        if self.down_block == 'resnet':
             down_block = ResNetDownBlock
-        elif self.down_block == 'MobileNetV2':
+        elif self.down_block == 'mobilenetv2':
             down_block = MobileNetV2DownBlock
         else:
             raise ValueError()

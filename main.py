@@ -131,13 +131,14 @@ class CustomTransform:
         self.std = std
 
     def __call__(self, x, y):
+        # Normalization
         x = (x - self.mean) / self.std
         return x, y
 
 
 @argh.arg("epochs", type=int)
 @argh.arg("model-name", type=str, choices=['runet'])
-@argh.arg("block-type", type=str, choices=['ResNet', 'MobileNetV2'])
+@argh.arg("block-type", type=str, choices=['resnet', 'mobilenetv2'])
 @argh.arg("dataset-path", type=Path)
 @argh.arg("in-size", type=int)
 @argh.arg("scale", type=int)
@@ -159,7 +160,7 @@ def main(epochs: int,
          in_size: int,
          scale: int,
          mean: Union[float, Tuple[float, float, float]] = 0,
-         stdev: Union[float, Tuple[float, float, float]] = 1,
+         std: Union[float, Tuple[float, float, float]] = 1,
          optimizer: str = 'adam',
          batch_size=64,
          learning_rate=1e-4,
@@ -169,6 +170,8 @@ def main(epochs: int,
          checkpoint_epoch: int = None,
          save_path: Path = None,
          seed: int = None):
+
+    block_type = block_type.lower()
 
     # Set environment variable WANDB_MODE=disabled
     # Remember to set WANDB_API_KEY as an environment variable
@@ -184,7 +187,7 @@ def main(epochs: int,
                    "in_size": in_size,
                    "scale": scale,
                    "mean": mean,
-                   "stdev": stdev,
+                   "std": std,
                    "device": device,
                    "batch_size": batch_size,
                    "optimizer": optimizer,
@@ -229,7 +232,7 @@ def main(epochs: int,
     if not test_dataset_path.exists():
         raise Exception(f"{test_dataset_path.relative_to(dataset_path)} does not exist.")
 
-    base_transform = CustomTransform(device, std=np.float32(stdev))
+    base_transform = CustomTransform(mean=np.float32(mean), std=np.float32(std))
 
     train_data = SyntheticDataset(train_dataset_path, transform=base_transform)
     test_data = SyntheticDataset(test_dataset_path, transform=base_transform)
