@@ -1,3 +1,4 @@
+import os
 import json
 import random
 from pathlib import Path
@@ -10,15 +11,15 @@ import torch.optim
 import torch.nn as nn
 
 from tqdm import tqdm
-from PIL import ImageOps
+from PIL import ImageOps, Image
 from skimage.transform import resize
 from torch.utils.data import DataLoader
 
 from models import *
 from evaluations import *
-from dataset import SyntheticDataset
+from dataset import FLHDataset
 from utils import FloatAction, labels_to_one_hot, one_hot_to_labels
-
+from loss import dice_loss
 
 def save_checkpoint(model: nn.Module,
                     optimizer: torch.optim.Optimizer,
@@ -62,20 +63,22 @@ def train(model: nn.Module,
     with torch.set_grad_enabled(True):
         model.train()
         for batch_idx, (x, yt) in enumerate(loop):
+            # print ("yt", yt.shape)
             one_hot_yt = labels_to_one_hot(yt).to(torch.float32)
-
+            # print ("one_hot_yt", one_hot_yt.shape)
             x = x.to(device)
             yt = yt.to(device)
             one_hot_yt = one_hot_yt.to(device)
 
             optimizer.zero_grad()
             one_hot_yp = model(x)
+            # print(one_hot_yp.shape)
             loss = criterion(one_hot_yp, one_hot_yt)
             loss.backward()
             optimizer.step()
 
             batch_loss = loss.item()
-            log_data['loss'] += batch_loss
+            log_data['loss'] = batch_loss
 
             yp = one_hot_to_labels(one_hot_yp)
             log_data.update(evaluation(yt, yp))
@@ -86,45 +89,43 @@ def train(model: nn.Module,
 def test(model: nn.Module,
          loader: DataLoader,
          evaluation: Evaluations,
-         device: Union[torch.device, str]) -> Dict[str, Any]:
+         device: Union[torch.device, str],
+         save_folder: Path) -> Dict[str, Any]:
     class_labels = {0: "background", 1: "border"}
     evaluation.reset()
     log_data = {}
     predictions = []
     loop = tqdm(loader, desc='Test')
+    save_folder.mkdir(parents=True, exist_ok=True)
     with torch.set_grad_enabled(False):
         model.eval()
         for batch_idx, (x, yt) in enumerate(loop):
             x = x.to(device)
             yt = yt.to(device)
-            yp = one_hot_to_labels(model(x))
+            yp = (model(x))
             log_data.update(evaluation(yt, yp))
-
-            if batch_idx == 0:
-                for img_idx in range(len(x)):
-                    x_img = x[img_idx].detach().cpu().numpy()
-                    yp_img = yp[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
-                    yt_img = yt[img_idx].detach().cpu().numpy().astype(np.uint8()).squeeze()
-
-                    x_img = np.transpose(x_img, (1, 2, 0))
-                    x_img = resize(x_img, yp_img.shape, anti_aliasing=False)
-
-                    predictions.append(
-                        wandb.Image(
-                            x_img,
-                            masks={
-                                "predictions": {"mask_data": yp_img, "class_labels": class_labels},
-                                "ground_truth": {"mask_data": yt_img, "class_labels": class_labels},
-                            },
-                            caption=f"Image {batch_idx + img_idx}",
-                        )
-                    )
+            for img_idx in range(len(x)):
+                yp_img = yp[img_idx].detach().cpu().numpy()
+                yp_img = (yp_img * 255).astype(np.uint8)[0]
+                # yp_img = one_hot_to_labels(yp_img)
+                # print (yp_img.shape)
+                # Ensure yt_img has a valid shape for PIL
+                # if yp_img.ndim == 3 and yp_img.shape[0] == 1:
+                #     yp_img = yp_img.squeeze(0)
+                # elif yp_img.ndim == 2:
+                #     yp_img = yp_img
+                # else:
+                #     raise ValueError(f"Unexpected shape for yp_img: {yp_img.shape}")
+                
+                # Save the prediction image
+                pred_image = Image.fromarray(yp_img)
+                pred_image.save(save_folder / f"prediction_{batch_idx}_{img_idx}.png")
 
             loop.set_postfix(log_data)
     log_data['prediction'] = predictions
     return log_data
 
-
+#
 class CustomTransform:
     def __init__(self, mean=0, std=1):
         self.mean = mean
@@ -143,10 +144,10 @@ class CustomTransform:
 @argh.arg("in-size", type=int)
 @argh.arg("scale", type=int)
 @argh.arg("--mean", type=float, nargs='+', action=FloatAction, default=0)
-@argh.arg("--stdev", type=float, nargs='+', action=FloatAction, default=1)
+@argh.arg("--std", type=float, nargs='+', action=FloatAction, default=1)
 @argh.arg("--optimizer", type=str, default='adam')
 @argh.arg("--batch-size", type=int, default=64)
-@argh.arg("--learning-rate", type=float, default=1e-4)
+@argh.arg("--learning-rate", type=float, default=1e-6)
 @argh.arg("--balance-classes", type=float, nargs=2, default=None)
 @argh.arg("--use-cuda", default=True)
 @argh.arg("--num-workers", type=int, default=4)
@@ -173,34 +174,9 @@ def main(epochs: int,
 
     block_type = block_type.lower()
 
-    # Set environment variable WANDB_MODE=disabled
-    # Remember to set WANDB_API_KEY as an environment variable
-    wandb.login()
 
     device = "cuda:0" if use_cuda and torch.cuda.is_available() else "cpu"
 
-    wandb.init(project="upsegmentation",
-               config={
-                   "epochs": epochs,
-                   "model": model_name,
-                   "block_type": block_type,
-                   "in_size": in_size,
-                   "scale": scale,
-                   "mean": mean,
-                   "std": std,
-                   "device": device,
-                   "batch_size": batch_size,
-                   "optimizer": optimizer,
-                   "balance_classes": balance_classes,
-                   "learning_rate": learning_rate,
-                   "num_workers": num_workers,
-                   "seed": seed,
-               })
-
-    # Check if save_path is None and wandb is not disabled
-    # If wandb is not disabled, save_path is set to wandb.run.dir
-    if save_path is None and wandb.run is not None:
-        save_path = Path(wandb.run.dir)
 
     if save_path:
         save_path.mkdir(parents=True, exist_ok=True)
@@ -216,29 +192,51 @@ def main(epochs: int,
             torch.cuda.manual_seed(seed)
 
     if model_name == 'runet':
-        model = RUNet(1, 2, scale=scale, down_block=block_type)
+        model = RUNet(1, 1, scale=scale, down_block=block_type)
 
     else:
         raise ValueError()
 
     model = model.to(device)
 
-    train_dataset_path = dataset_path / "train" / str(in_size)
-    test_dataset_path = dataset_path / "test" / str(in_size * scale)
-
-    if not train_dataset_path.exists():
-        raise Exception(f"{train_dataset_path.relative_to(dataset_path)} does not exist.")
-
-    if not test_dataset_path.exists():
-        raise Exception(f"{test_dataset_path.relative_to(dataset_path)} does not exist.")
-
     base_transform = CustomTransform(mean=np.float32(mean), std=np.float32(std))
 
-    train_data = SyntheticDataset(train_dataset_path, transform=base_transform)
-    test_data = SyntheticDataset(test_dataset_path, transform=base_transform)
+    dataset = FLHDataset(dataset_path, transform=base_transform, contour=False, resize=in_size)
+    # perform a 80-20 split of the dataset keeping the same distribution of classes
+    train_size = int(0.8 * len(dataset))
+    test_size = len(dataset) - train_size
+    train_data, test_data = torch.utils.data.random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(seed))
+
 
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+
+    # show some examples using matplotlib
+    # show some examples using matplotlib
+    import matplotlib.pyplot as plt
+
+    def show_examples(loader, num_examples=4):
+        model.eval()
+        examples = next(iter(loader))
+        x, yt = examples
+        with torch.no_grad():
+            yp = (model(x.to(device)))
+            # yp = one_hot_to_labels(yp)
+            print(yp)
+        fig, axes = plt.subplots(num_examples, 3, figsize=(15, num_examples * 5))
+        for i in range(num_examples):
+            print(yp[i].shape)
+            axes[i, 0].imshow(np.transpose(x[i].numpy(), (1, 2, 0)))
+            axes[i, 0].set_title("Input Image")
+            axes[i, 1].imshow(np.transpose(yt[i].numpy(), (1, 2, 0)), cmap='gray')
+            axes[i, 1].set_title("Ground Truth")
+            axes[i, 2].imshow(yp[i].cpu().numpy().squeeze(), cmap='gray')
+            axes[i, 2].set_title("Prediction")
+        plt.show()
+        model.train()
+
+    show_examples(test_loader)
+
 
     if optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -249,7 +247,7 @@ def main(epochs: int,
         criterion = nn.BCEWithLogitsLoss()
     else:
         criterion = nn.CrossEntropyLoss(weight=torch.tensor(balance_classes).to(device) / sum(balance_classes))
-
+    # criterion = dice_loss
     evaluations = Evaluations([
         'accuracy',
         'precision',
@@ -262,7 +260,7 @@ def main(epochs: int,
         log_data = {}
 
         train_log = train(model, train_loader, evaluations, device, criterion, optimizer)
-        test_log = test(model, test_loader, evaluations, device)
+        test_log = test(model, test_loader, evaluations, device, save_path / f"predictions_epoch_{epoch}")
 
         log_data.update({f"train_{k}": v for k, v in train_log.items()})
         log_data.update({f"test_{k}": v for k, v in test_log.items()})
@@ -272,12 +270,10 @@ def main(epochs: int,
         if save_path and checkpoint_epoch is not None and (epoch % checkpoint_epoch) == (checkpoint_epoch - 1):
             save_checkpoint(model, optimizer, epoch, save_path, f"{model_name}-checkpoint-{epoch:04d}.pth")
 
-        wandb.log(log_data)
 
     if save_path:
         torch.save(model.state_dict(), save_path / f"{model_name}.pth")
 
-    wandb.finish()
 
 
 if __name__ == "__main__":
